@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import html2canvas from 'html2canvas';
-import jsPDF from 'jspdf'; // <--- NOVA IMPORTAÇÃO
+import jsPDF from 'jspdf';
 
 // --- BANCO DE DADOS DE LAYOUTS ---
 const LAYOUTS = {
@@ -305,11 +305,7 @@ export default function KeyboardTester() {
 
   // REGRAS DE NEGÓCIO
   const isAllTested = testedKeys.size >= currentLayout.keys.length;
-  
-  // CORREÇÃO DA REGRA DE REJEIÇÃO:
-  // Permite rejeitar se: (Texto Longo + Teclas Rejeitadas) OU (Defeito Cabo) OU (Defeito Firmware)
   const canReject = (reportText.trim().length >= 5 && rejectedKeys.size > 0) || defectCable || defectFirmware;
-  
   const canApprove = (testedKeys.size >= currentLayout.keys.length);
 
   // EFFECT ÚNICO DE CAPTURA
@@ -356,41 +352,31 @@ export default function KeyboardTester() {
 
   const exportAsImage = async () => {
     if (!reportRef.current) return;
-
     try {
-      // 1. Configuração robusta para o html2canvas
       const canvas = await html2canvas(reportRef.current, {
-        scale: 2, // Mantém alta resolução (Retina)
-        backgroundColor: '#0f172a', // Força a cor de fundo do tema escuro
-        useCORS: true, // Essencial para fotos da webcam aparecerem
+        scale: 2,
+        backgroundColor: '#0f172a',
+        useCORS: true,
         logging: false,
-        // As linhas abaixo corrigem o problema de corte/scroll
         scrollX: 0,
         scrollY: 0,
         windowWidth: document.documentElement.offsetWidth,
         windowHeight: document.documentElement.offsetHeight
       });
-
-      // 2. Criação do link de download seguro
       const image = canvas.toDataURL("image/png", 1.0);
       const link = document.createElement('a');
       link.href = image;
-      link.download = `LAUDO_${serial || 'EQUIPAMENTO'}_${new Date().getTime()}.png`;
-      
-      // Hack para Firefox/Alguns navegadores que exigem o elemento no DOM
+      link.download = `LAUDO_${dispositivoSerial || 'EQUIPAMENTO'}_${new Date().getTime()}.png`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-
     } catch (error) {
-      console.error("Erro ao gerar imagem:", error);
-      alert("Erro ao gerar o laudo. Verifique o console (F12) para detalhes.");
+      alert("Erro ao gerar imagem.");
     }
   };
 
   const exportAsPDF = async () => {
     if (!reportRef.current) return;
-
     try {
       const canvas = await html2canvas(reportRef.current, {
         scale: 2,
@@ -399,28 +385,14 @@ export default function KeyboardTester() {
         scrollX: 0,
         scrollY: 0
       });
-
-      // Usar JPEG com qualidade 0.9 reduz o tamanho do arquivo PDF drasticamente
-      // e evita falhas em documentos grandes
       const imgData = canvas.toDataURL('image/jpeg', 0.9);
-      
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit: 'mm',
-        format: 'a4'
-      });
-
-      const imgProps = pdf.getImageProperties(imgData);
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
       const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-
-      // Centraliza verticalmente se o laudo for pequeno, ou topo se for grande
+      const pdfHeight = (pdf.getImageProperties(imgData).height * pdfWidth) / pdf.getImageProperties(imgData).width;
       pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
-      pdf.save(`LAUDO_${serial || 'EQUIPAMENTO'}_${new Date().getTime()}.pdf`);
-
+      pdf.save(`LAUDO_${dispositivoSerial || 'EQUIPAMENTO'}_${new Date().getTime()}.pdf`);
     } catch (error) {
-      console.error("Erro ao gerar PDF:", error);
-      alert("Erro ao gerar PDF. Tente baixar como Imagem.");
+      alert("Erro ao gerar PDF.");
     }
   };
 
@@ -473,7 +445,6 @@ export default function KeyboardTester() {
                   <p>O dispositivo foi submetido a testes rigorosos de continuidade e acionamento. Todas as teclas responderam dentro dos padrões de latência esperados. Não foram identificadas falhas físicas ou lógicas. <strong>Dispositivo apto para uso.</strong></p>
                 ) : (
                   <>
-                    {/* ADIÇÃO: Exibição Condicional de Falhas Críticas */}
                     {(defectCable || defectFirmware) && (
                       <div style={{marginBottom: '10px', color: '#dc2626'}}>
                         <p><strong>FALHAS CRÍTICAS IDENTIFICADAS:</strong></p>
@@ -483,16 +454,13 @@ export default function KeyboardTester() {
                         </ul>
                       </div>
                     )}
-                    
                     <p><strong>Observações:</strong> {reportText || "Sem observações de texto."}</p>
-                    
                     {rejectedKeys.size > 0 && (
                       <p><strong>Teclas com Falha:</strong> <span className="highlight-danger">{[...rejectedKeys].join(', ')}</span></p>
                     )}
                   </>
                 )}
               </div>
-              
               <div className="report-signature">
                 <p>__________________________________________</p>
                 <p><strong>{tecnicoNome}</strong></p>
@@ -503,7 +471,8 @@ export default function KeyboardTester() {
         </div>
 
         <div className="summary-footer-btns">
-          <button className="btn-download" onClick={exportAsImage}>💾 BAIXAR LAUDO (PNG)</button>
+          <button className="btn-download" onClick={exportAsImage}>📸 PNG</button>
+          <button className="btn-download" onClick={exportAsPDF} style={{backgroundColor: '#dc2626', color: 'white'}}>📄 PDF</button>
           <button className="btn-restart" onClick={() => window.location.reload()}>🔄 NOVO DIAGNÓSTICO</button>
         </div>
       </div>
@@ -515,7 +484,6 @@ export default function KeyboardTester() {
       <header className="tester-header">
         <div className="brand">
           <h2>DIAGNÓSTICO TÉCNICO</h2>
-          
           <div className="model-selector-wrapper">
             <label>Modelo:</label>
             <select 
@@ -525,16 +493,10 @@ export default function KeyboardTester() {
               disabled={showReportForm || isFinalized}
             >
               {Object.keys(LAYOUTS).map((key) => (
-                <option key={key} value={key}>
-                  {LAYOUTS[key].name}
-                </option>
+                <option key={key} value={key}>{LAYOUTS[key].name}</option>
               ))}
             </select>
           </div>
-        </div>
-
-        <div className="control-center">
-          {/* Botões de tema e reset podem ser adicionados aqui */}
         </div>
       </header>
 
@@ -571,19 +533,8 @@ export default function KeyboardTester() {
               <span>Última Tecla: <strong>{lastCode || '---'}</strong></span>
             </div>
             <div className="btn-group">
-              <button 
-                className={`btn-approve ${isAllTested ? 'active' : ''}`} 
-                disabled={!isAllTested} 
-                onClick={() => setShowReportForm('approve')}
-              >
-                APROVAR TECLADO
-              </button>
-              <button 
-                className="btn-reject" 
-                onClick={() => setShowReportForm('reject')} 
-              >
-                REPROVAR / LAUDO
-              </button>
+              <button className={`btn-approve ${isAllTested ? 'active' : ''}`} disabled={!isAllTested} onClick={() => setShowReportForm('approve')}>APROVAR TECLADO</button>
+              <button className="btn-reject" onClick={() => setShowReportForm('reject')}>REPROVAR / LAUDO</button>
             </div>
           </div>
         ) : (
@@ -594,80 +545,27 @@ export default function KeyboardTester() {
             </div>
 
             <div className="input-group-row">
-               <input 
-                type="text" 
-                placeholder="Nº Série / Patrimônio" 
-                value={dispositivoSerial}
-                onChange={(e) => setDispositivoSerial(e.target.value)}
-              />
-              <input 
-                type="text" 
-                placeholder="Nome do Técnico" 
-                value={tecnicoNome}
-                onChange={(e) => setTecnicoNome(e.target.value)}
-              />
-              <input 
-                type="text" 
-                placeholder="Matrícula" 
-                value={tecnicoMatricula}
-                onChange={(e) => setTecnicoMatricula(e.target.value)}
-                style={{maxWidth: '120px'}}
-              />
+               <input type="text" placeholder="Nº Série / Patrimônio" value={dispositivoSerial} onChange={(e) => setDispositivoSerial(e.target.value)} />
+               <input type="text" placeholder="Nome do Técnico" value={tecnicoNome} onChange={(e) => setTecnicoNome(e.target.value)} />
+               <input type="text" placeholder="Matrícula" value={tecnicoMatricula} onChange={(e) => setTecnicoMatricula(e.target.value)} style={{maxWidth: '120px'}} />
             </div>
             
-            {/* SEÇÃO EXCLUSIVA DE REPROVAÇÃO (TOGGLES) */}
             {showReportForm === 'reject' && (
-              <div className="global-defects-wrapper animate-fade-in" style={{marginBottom: '15px'}}>
+              <div className="global-defects-wrapper">
                 <p className="section-label">Falhas Críticas (Hardware/Lógico):</p>
                 <div className="defects-grid">
-                  <button 
-                    className={`defect-toggle ${defectCable ? 'active' : ''}`}
-                    onClick={() => setDefectCable(!defectCable)}
-                  >
-                    🔌 Cabo / Conector
-                  </button>
-                  
-                  <button 
-                    className={`defect-toggle ${defectFirmware ? 'active' : ''}`}
-                    onClick={() => setDefectFirmware(!defectFirmware)}
-                  >
-                    🤖 Erro de Firmware
-                  </button>
+                  <button className={`defect-toggle ${defectCable ? 'active' : ''}`} onClick={() => setDefectCable(!defectCable)}>🔌 Cabo / Conector</button>
+                  <button className={`defect-toggle ${defectFirmware ? 'active' : ''}`} onClick={() => setDefectFirmware(!defectFirmware)}>🤖 Erro de Firmware</button>
                 </div>
               </div>
             )}
 
-            <textarea 
-              value={reportText} 
-              onChange={(e) => setReportText(e.target.value)} 
-              placeholder={
-                showReportForm === 'approve' 
-                  ? "Nada a declarar ou teclado em perfeito funcionamento..." 
-                  : "Descreva as falhas encontradas (Obrigatório para reprovação) ou observações adicionais..."
-              }
-            />
+            <textarea value={reportText} onChange={(e) => setReportText(e.target.value)} placeholder={showReportForm === 'approve' ? "Nada a declarar..." : "Descreva as falhas..."} />
             
             <div className="form-btns">
-              {showReportForm === 'approve' && (
-                <button 
-                  className="btn-approve active" 
-                  disabled={!isAllTested}
-                  onClick={() => handleFinalize('approved')}
-                >
-                  GERAR LAUDO APROVADO
-                </button>
-              )}
-
-              {showReportForm === 'reject' && (
-                <button 
-                  className="btn-reject" 
-                  disabled={!canReject} 
-                  onClick={() => handleFinalize('rejected')}
-                >
-                  FINALIZAR REPROVAÇÃO
-                </button>
-              )}
-              
+              <button className={showReportForm === 'approve' ? 'btn-approve active' : 'btn-reject'} disabled={showReportForm === 'reject' && !canReject} onClick={() => handleFinalize(showReportForm === 'approve' ? 'approved' : 'rejected')}>
+                GERAR LAUDO
+              </button>
               <button className="btn-util" onClick={() => setShowReportForm(false)}>CANCELAR</button>
             </div>
           </div>

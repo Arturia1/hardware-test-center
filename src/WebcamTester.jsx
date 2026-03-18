@@ -1,11 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
+import * as tf from '@tensorflow/tfjs';
+import * as blazeface from '@tensorflow-models/blazeface';
 
 export default function WebcamTester({ onBack }) {
-  // --- Estados de Hardware ---
+  // --- Estados de Hardware e IA ---
   const [stream, setStream] = useState(null);
   const [deviceInfo, setDeviceInfo] = useState({ label: 'Nenhuma câmera selecionada', id: '' });
+  const [faceModel, setFaceModel] = useState(null);
+  const [isAiLoading, setIsAiLoading] = useState(true);
   
   // --- Sensores em Tempo Real ---
   const [realResolution, setRealResolution] = useState({ width: 0, height: 0 });
@@ -37,14 +41,30 @@ export default function WebcamTester({ onBack }) {
   const canvasOverlayRef = useRef(null);
   const reportRef = useRef(null);
   
-  // Refs para cálculo de FPS
   const frameCountRef = useRef(0);
   const lastTimeRef = useRef(performance.now());
   const rafIdRef = useRef(null);
+  const isDetectingRef = useRef(false);
 
   // --- LÓGICA DE APROVAÇÃO ---
   const isReadyToApprove = stream && snapshot && !Object.values(defects).some(d => d);
   const canReject = (reportText.trim().length >= 5) || Object.values(defects).some(d => d);
+
+  // --- CARREGAR MODELO DE IA (BLAZEFACE) ---
+  useEffect(() => {
+    const loadAI = async () => {
+      try {
+        await tf.ready(); // Garante que o WebGL está pronto
+        const model = await blazeface.load();
+        setFaceModel(model);
+        setIsAiLoading(false);
+      } catch (error) {
+        console.error("Erro ao carregar TensorFlow:", error);
+        setIsAiLoading(false);
+      }
+    };
+    loadAI();
+  }, []);
 
   // --- CONEXÃO DO VÍDEO ---
   useEffect(() => {
@@ -53,7 +73,7 @@ export default function WebcamTester({ onBack }) {
     }
   }, [stream]);
 
-  // --- SENSOR DE FPS E DETECÇÃO DE ROSTO (LOOP MELHORADO) ---
+  // --- SENSOR DE FPS E DETECÇÃO DE ROSTO (TENSORFLOW) ---
   useEffect(() => {
     if (!stream || !videoRef.current || !canvasOverlayRef.current) return;
 
@@ -61,19 +81,18 @@ export default function WebcamTester({ onBack }) {
       const video = videoRef.current;
       const canvas = canvasOverlayRef.current;
       
-      if (video && video.readyState >= 2) { // 2 = HAVE_CURRENT_DATA ou superior
+      if (video && video.readyState >= 2) { 
         
-        // 1. Atualiza Resolução Real e Sincroniza Canvas
+        // Atualiza Resolução Real
         if (video.videoWidth > 0 && video.videoHeight > 0) {
              if (video.videoWidth !== realResolution.width || video.videoHeight !== realResolution.height) {
                  setRealResolution({ width: video.videoWidth, height: video.videoHeight });
-                 // Importante: Sincronizar tamanho interno do canvas com o vídeo
                  canvas.width = video.videoWidth;
                  canvas.height = video.videoHeight;
              }
         }
 
-        // 2. Contador de FPS
+        // Contador de FPS
         frameCountRef.current++;
         const now = performance.now();
         if (now - lastTimeRef.current >= 1000) {
@@ -82,46 +101,65 @@ export default function WebcamTester({ onBack }) {
           lastTimeRef.current = now;
         }
 
-        // 3. Detecção de Rosto (Visualização Melhorada)
-        const ctx = canvas.getContext('2d', { alpha: true });
-        // Limpa o frame anterior completamente
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        if ('FaceDetector' in window && canvas.width > 0) {
+        // HUD e Detecção com BlazeFace
+        const ctx = canvas.getContext('2d');
+        
+        if (faceModel && canvas.width > 0 && !isDetectingRef.current) {
+          isDetectingRef.current = true; 
+          
           try {
-            // @ts-ignore
-            const faceDetector = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 5 });
-            const faces = await faceDetector.detect(video);
-            setDetectedFaces(faces.length);
-
-            // Estilo Neon para melhor visibilidade
-            ctx.strokeStyle = '#00ffea'; // Ciano Neon
-            ctx.lineWidth = 4;
-            ctx.shadowColor = '#00ffea'; // Brilho
-            ctx.shadowBlur = 15;
-            ctx.font = 'bold 14px Arial';
+            // TensorFlow estima os rostos na imagem
+            const predictions = await faceModel.estimateFaces(video, false);
+            setDetectedFaces(predictions.length);
             
-            faces.forEach((face, index) => {
-              const { width, height, top, left } = face.boundingBox;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            predictions.forEach((pred, index) => {
+              // O BlazeFace retorna [x, y] do topo esquerdo e da base direita
+              const start = pred.topLeft;
+              const end = pred.bottomRight;
+              const size = [end[0] - start[0], end[1] - start[1]];
               
-              // Desenha o retângulo neon
-              ctx.strokeRect(left, top, width, height);
+              const left = start[0];
+              const top = start[1];
+              const width = size[0];
+              const height = size[1];
+              
+              ctx.strokeStyle = '#00ffea';
+              ctx.lineWidth = 3;
+              ctx.shadowColor = '#00ffea';
+              ctx.shadowBlur = 10;
 
-              // Fundo semi-transparente para o texto
-              ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-              ctx.fillRect(left, top - 25, width > 100 ? width : 100, 25);
+              const len = width * 0.15;
 
-              // Texto do rótulo
+              ctx.beginPath();
+              ctx.moveTo(left, top + len); ctx.lineTo(left, top); ctx.lineTo(left + len, top);
+              ctx.moveTo(left + width - len, top); ctx.lineTo(left + width, top); ctx.lineTo(left + width, top + len);
+              ctx.moveTo(left + width, top + height - len); ctx.lineTo(left + width, top + height); ctx.lineTo(left + width - len, top + height);
+              ctx.moveTo(left + len, top + height); ctx.lineTo(left, top + height); ctx.lineTo(left, top + height - len);
+              ctx.stroke();
+
+              ctx.beginPath();
+              ctx.arc(left + width/2, top + height/2, 4, 0, 2*Math.PI);
+              ctx.fillStyle = '#ef4444';
+              ctx.shadowColor = '#ef4444';
+              ctx.fill();
+
+              ctx.fillStyle = 'rgba(0, 255, 234, 0.15)';
+              ctx.shadowBlur = 0;
+              ctx.fillRect(left, top - 25, 110, 20);
               ctx.fillStyle = '#00ffea';
-              ctx.shadowBlur = 0; // Remove brilho do texto para leitura
-              ctx.fillText(`Rosto #${index + 1}`, left + 5, top - 8);
-              // Restaura brilho para o próximo retângulo
-              ctx.shadowBlur = 15;
+              ctx.font = 'bold 12px monospace';
+              ctx.fillText(`ALVO [${index + 1}]`, left + 5, top - 10);
             });
 
           } catch (e) {
-            // Silencia erros da API experimental
+             // Ignora erros de frame solto
+          } finally {
+            isDetectingRef.current = false; 
           }
+        } else if (!faceModel && !isAiLoading) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
         }
       }
       
@@ -132,18 +170,17 @@ export default function WebcamTester({ onBack }) {
 
     return () => {
       if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
-      // Limpa o canvas ao desmontar
       if (canvasOverlayRef.current) {
           const ctx = canvasOverlayRef.current.getContext('2d');
           ctx.clearRect(0, 0, canvasOverlayRef.current.width, canvasOverlayRef.current.height);
       }
     };
-  }, [stream, realResolution.width, realResolution.height]); // Dependências ajustadas
+  }, [stream, realResolution.width, realResolution.height, faceModel, isAiLoading]);
 
   // --- Funções da Webcam ---
   const startCamera = async () => {
     try {
-      stopCamera(); // Garante que parou anterior
+      stopCamera(); 
 
       const newStream = await navigator.mediaDevices.getUserMedia({ 
         video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60 } }, 
@@ -181,13 +218,10 @@ export default function WebcamTester({ onBack }) {
     canvas.height = realResolution.height;
     const ctx = canvas.getContext('2d');
     
-    // Captura apenas o vídeo limpo
     ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-    
     setSnapshot(canvas.toDataURL('image/jpeg', 0.95));
   };
 
-  // Cleanup
   useEffect(() => {
     return () => stopCamera();
   }, []);
@@ -202,72 +236,30 @@ export default function WebcamTester({ onBack }) {
 
   const exportAsImage = async () => {
     if (!reportRef.current) return;
-
     try {
-      // 1. Configuração robusta para o html2canvas
       const canvas = await html2canvas(reportRef.current, {
-        scale: 2, // Mantém alta resolução (Retina)
-        backgroundColor: '#0f172a', // Força a cor de fundo do tema escuro
-        useCORS: true, // Essencial para fotos da webcam aparecerem
-        logging: false,
-        // As linhas abaixo corrigem o problema de corte/scroll
-        scrollX: 0,
-        scrollY: 0,
-        windowWidth: document.documentElement.offsetWidth,
-        windowHeight: document.documentElement.offsetHeight
+        scale: 2, backgroundColor: '#0f172a', useCORS: true, logging: false, scrollX: 0, scrollY: 0,
+        windowWidth: document.documentElement.offsetWidth, windowHeight: document.documentElement.offsetHeight
       });
-
-      // 2. Criação do link de download seguro
       const image = canvas.toDataURL("image/png", 1.0);
       const link = document.createElement('a');
       link.href = image;
       link.download = `LAUDO_${serial || 'EQUIPAMENTO'}_${new Date().getTime()}.png`;
-      
-      // Hack para Firefox/Alguns navegadores que exigem o elemento no DOM
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-    } catch (error) {
-      console.error("Erro ao gerar imagem:", error);
-      alert("Erro ao gerar o laudo. Verifique o console (F12) para detalhes.");
-    }
+      document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    } catch (error) { alert("Erro ao gerar o laudo."); }
   };
 
   const exportAsPDF = async () => {
     if (!reportRef.current) return;
-
     try {
-      const canvas = await html2canvas(reportRef.current, {
-        scale: 2,
-        backgroundColor: '#0f172a',
-        useCORS: true,
-        scrollX: 0,
-        scrollY: 0
-      });
-
-      // Usar JPEG com qualidade 0.9 reduz o tamanho do arquivo PDF drasticamente
-      // e evita falhas em documentos grandes
+      const canvas = await html2canvas(reportRef.current, { scale: 2, backgroundColor: '#0f172a', useCORS: true, scrollX: 0, scrollY: 0 });
       const imgData = canvas.toDataURL('image/jpeg', 0.9);
-      
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit: 'mm',
-        format: 'a4'
-      });
-
-      const imgProps = pdf.getImageProperties(imgData);
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
       const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-
-      // Centraliza verticalmente se o laudo for pequeno, ou topo se for grande
+      const pdfHeight = (pdf.getImageProperties(imgData).height * pdfWidth) / pdf.getImageProperties(imgData).width;
       pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
       pdf.save(`LAUDO_${serial || 'EQUIPAMENTO'}_${new Date().getTime()}.pdf`);
-
-    } catch (error) {
-      console.error("Erro ao gerar PDF:", error);
-      alert("Erro ao gerar PDF. Tente baixar como Imagem.");
-    }
+    } catch (error) { alert("Erro ao gerar PDF."); }
   };
 
   // --- RENDERIZAÇÃO: LAUDO ---
@@ -293,18 +285,14 @@ export default function WebcamTester({ onBack }) {
                 <p><strong>Técnico:</strong> {tecnicoNome || '__________________'}</p>
                 <p><strong>Matrícula:</strong> {tecnicoMatricula || '__________________'}</p>
               </div>
-              <div className={`status-stamp-large ${resultStatus}`}>
-                {resultStatus === 'approved' ? 'APROVADO' : 'REPROVADO'}
-              </div>
+              <div className={`status-stamp-large ${resultStatus}`}>{resultStatus === 'approved' ? 'APROVADO' : 'REPROVADO'}</div>
             </section>
 
-            <div style={{
-                width: '100%', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '15px', marginBottom: '15px', backgroundColor: '#f9fafb', textAlign: 'center'
-            }}>
+            <div style={{ width: '100%', border: '1px solid #e5e7eb', borderRadius: '8px', padding: '15px', marginBottom: '15px', backgroundColor: '#f9fafb', textAlign: 'center' }}>
                 <h3 style={{ margin: '0 0 10px 0', fontSize: '0.8rem', textTransform: 'uppercase', color: '#6b7280' }}>Evidência de Captura</h3>
                 {snapshot ? (
                     <img src={snapshot} alt="Teste Webcam" style={{maxWidth: '100%', maxHeight: '350px', objectFit: 'contain', borderRadius: '4px', border: '1px solid #ccc', boxShadow: '0 2px 5px rgba(0,0,0,0.1)'}} />
-                ) : <div style={{padding: '50px'}}>Nenhuma imagem</div>}
+                ) : <div style={{padding: '50px', color: '#000'}}>Nenhuma imagem</div>}
                  <div style={{marginTop: '10px', fontSize: '0.8rem', color: '#374151'}}>
                    Resolução Nativa: <strong>{realResolution.width}x{realResolution.height}</strong> | Desempenho durante teste: <strong>~{realFps} FPS</strong>
                 </div>
@@ -377,19 +365,30 @@ export default function WebcamTester({ onBack }) {
                 <h3 style={{color: realFps >= 24 ? '#4ade80' : (realFps > 0 ? '#fbbf24' : 'inherit'), fontSize: '1.8rem'}}>{realFps}</h3>
                 <span>Tempo Real</span>
             </div>
+            
+            {/* CARD DE DETECÇÃO TENSORFLOW */}
             <div className="info-card">
-                <label>DETECÇÃO FACIAL</label>
-                <h3 style={{color: detectedFaces > 0 ? '#00ffea' : 'inherit', fontSize: '1.8rem'}}>{detectedFaces}</h3>
-                <span>{detectedFaces > 0 ? 'Rostos visíveis' : 'Aguardando...'}</span>
+                <label>DETECÇÃO FACIAL (AI)</label>
+                <h3 style={{
+                    color: isAiLoading ? '#fbbf24' : (detectedFaces > 0 ? '#00ffea' : 'inherit'), 
+                    fontSize: isAiLoading ? '1.2rem' : '1.8rem',
+                    marginTop: '5px'
+                }}>
+                    {isAiLoading ? 'CARREGANDO IA...' : detectedFaces}
+                </h3>
+                <span style={{fontSize: '0.7rem', opacity: 0.8}}>
+                    {isAiLoading 
+                        ? 'Baixando modelo TensorFlow' 
+                        : (detectedFaces > 0 ? 'Alvos rastreados' : 'Aguardando...')}
+                </span>
             </div>
         </div>
 
-        {/* CENTRO: VÍDEO + OVERLAY (CSS Ajustado para ocupar mais espaço) */}
+        {/* CENTRO: VÍDEO + OVERLAY */}
         <div className="webcam-visualizer-container">
             <div className="video-frame" style={{position: 'relative', width: '100%', height: '100%'}}>
                 {stream ? (
                     <>
-                      {/* Vídeo e Canvas devem ter tamanho exato e posições absolutas para alinhamento perfeito */}
                       <video ref={videoRef} autoPlay playsInline muted className="live-video" style={{position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain'}} />
                       <canvas ref={canvasOverlayRef} style={{position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none'}} />
                     </>

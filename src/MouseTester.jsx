@@ -10,6 +10,9 @@ export default function MouseTester({ onBack }) {
     serial: ""
   });
   
+  // --- NOVO ESTADO: Controle de Edição ---
+  const [isEditingModel, setIsEditingModel] = useState(false);
+
   const [tests, setTests] = useState({
     leftClick: false,
     rightClick: false,
@@ -72,7 +75,8 @@ export default function MouseTester({ onBack }) {
 
   // --- Handlers ---
   useEffect(() => {
-    if (isFinalized || showReportForm) return;
+    // --- ATUALIZADO: Pausa os testes se estiver editando ---
+    if (isFinalized || showReportForm || isEditingModel) return;
 
     const handleMouseDown = (e) => {
       if (e.button === 1) e.preventDefault();
@@ -111,7 +115,7 @@ export default function MouseTester({ onBack }) {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('wheel', handleWheel);
     };
-  }, [isFinalized, showReportForm]);
+  }, [isFinalized, showReportForm, isEditingModel]);
 
   // --- Funções Auxiliares ---
   const resetTests = () => {
@@ -130,55 +134,48 @@ export default function MouseTester({ onBack }) {
     setShowReportForm(false);
   };
 
+  // --- ATUALIZADO: Exportações Universais ---
   const exportAsImage = async () => {
     if (!reportRef.current) return;
-
     try {
-      // 1. Configuração robusta para o html2canvas
       const canvas = await html2canvas(reportRef.current, {
-        scale: 2, // Mantém alta resolução (Retina)
-        backgroundColor: '#0f172a', // Força a cor de fundo do tema escuro
-        useCORS: true, // Essencial para fotos da webcam aparecerem
+        scale: window.devicePixelRatio || 2,
+        backgroundColor: '#0f172a',
+        useCORS: true,
         logging: false,
-        // As linhas abaixo corrigem o problema de corte/scroll
+        allowTaint: true,
         scrollX: 0,
-        scrollY: 0,
-        windowWidth: document.documentElement.offsetWidth,
-        windowHeight: document.documentElement.offsetHeight
+        scrollY: -window.scrollY
       });
 
-      // 2. Criação do link de download seguro
       const image = canvas.toDataURL("image/png", 1.0);
       const link = document.createElement('a');
       link.href = image;
-      link.download = `LAUDO_${serial || 'EQUIPAMENTO'}_${new Date().getTime()}.png`;
+      link.download = `LAUDO_${deviceInfo.serial || 'EQUIPAMENTO'}_${new Date().getTime()}.png`;
       
-      // Hack para Firefox/Alguns navegadores que exigem o elemento no DOM
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-
     } catch (error) {
       console.error("Erro ao gerar imagem:", error);
-      alert("Erro ao gerar o laudo. Verifique o console (F12) para detalhes.");
+      alert("Erro ao gerar o laudo. Verifique se o navegador está com zoom ativo.");
     }
   };
 
   const exportAsPDF = async () => {
     if (!reportRef.current) return;
-
     try {
       const canvas = await html2canvas(reportRef.current, {
         scale: 2,
         backgroundColor: '#0f172a',
         useCORS: true,
+        logging: false,
+        allowTaint: true,
         scrollX: 0,
-        scrollY: 0
+        scrollY: -window.scrollY
       });
 
-      // Usar JPEG com qualidade 0.9 reduz o tamanho do arquivo PDF drasticamente
-      // e evita falhas em documentos grandes
-      const imgData = canvas.toDataURL('image/jpeg', 0.9);
+      const imgData = canvas.toDataURL('image/jpeg', 0.85);
       
       const pdf = new jsPDF({
         orientation: 'portrait',
@@ -190,10 +187,8 @@ export default function MouseTester({ onBack }) {
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
 
-      // Centraliza verticalmente se o laudo for pequeno, ou topo se for grande
       pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
-      pdf.save(`LAUDO_${serial || 'EQUIPAMENTO'}_${new Date().getTime()}.pdf`);
-
+      pdf.save(`LAUDO_${deviceInfo.serial || 'EQUIPAMENTO'}_${new Date().getTime()}.pdf`);
     } catch (error) {
       console.error("Erro ao gerar PDF:", error);
       alert("Erro ao gerar PDF. Tente baixar como Imagem.");
@@ -219,7 +214,7 @@ export default function MouseTester({ onBack }) {
           <div className="report-body">
             <section className="report-info-grid">
               <div className="info-item">
-                <p><strong>Equipamento:</strong> {deviceInfo.model}</p>
+                <p><strong>Equipamento:</strong> {deviceInfo.vendor} {deviceInfo.model}</p>
                 <p><strong>Técnico:</strong> {tecnicoNome || '__________________'}</p>
                 <p><strong>Matrícula:</strong> {tecnicoMatricula || '__________________'}</p>
               </div>
@@ -228,10 +223,9 @@ export default function MouseTester({ onBack }) {
               </div>
             </section>
 
-            {/* --- NOVO: VISUALIZAÇÃO GRÁFICA NO LAUDO --- */}
+            {/* Visualização Gráfica no Laudo mantida */}
             <div style={{ display: 'flex', justifyContent: 'center', margin: '20px 0' }}>
                 <div className={`mouse-body ${resultStatus === 'approved' ? 'all-success' : 'rejected'}`} style={{ transform: 'scale(0.8)' }}>
-                    {/* Se aprovado, mostra tudo ativo (verde). Se reprovado, o CSS 'rejected' cuida da cor vermelha */}
                     <div className={`mouse-btn left ${resultStatus === 'approved' ? 'active' : ''}`}></div>
                     <div className={`mouse-btn right ${resultStatus === 'approved' ? 'active' : ''}`}></div>
                     <div className={`mouse-scroll ${resultStatus === 'approved' ? 'active' : ''}`}>
@@ -293,6 +287,7 @@ export default function MouseTester({ onBack }) {
     <div className="tester-wrapper dark">
       <header className="tester-header">
         <div className="brand">
+          <button onClick={onBack} className="btn-back">⬅ Voltar</button>
           <h2>DIAGNÓSTICO DE MOUSE</h2>
         </div>
         <div className="control-center">
@@ -303,11 +298,60 @@ export default function MouseTester({ onBack }) {
       <main className="mouse-viewport">
         {/* LADO ESQUERDO: INFOS */}
         <div className="mouse-info-panel">
+            
+            {/* --- ATUALIZADO: BLOCO DO MODELO COM EDIÇÃO INLINE --- */}
             <div className="info-card">
-                <label>MODELO</label>
-                <h3>{deviceInfo.model}</h3>
-                <span>{deviceInfo.vendor}</span>
+                <label>MODELO DO EQUIPAMENTO</label>
+                
+                {!isEditingModel ? (
+                    <>
+                        <h3 style={{fontSize: '1rem', wordBreak: 'break-word'}}>{deviceInfo.model}</h3>
+                        <span style={{fontSize: '0.8rem', color: '#94a3b8'}}>{deviceInfo.vendor}</span>
+                        
+                        <button 
+                            onClick={() => setIsEditingModel(true)}
+                            style={{
+                                marginTop: '10px', width: '100%', background: 'transparent',
+                                border: '1px dashed #555', color: '#aaa', borderRadius: '4px',
+                                padding: '5px', cursor: 'pointer', fontSize: '0.8rem',
+                                transition: 'all 0.2s'
+                            }}
+                            onMouseOver={(e) => { e.target.style.borderColor = '#3b82f6'; e.target.style.color = '#3b82f6'; }}
+                            onMouseOut={(e) => { e.target.style.borderColor = '#555'; e.target.style.color = '#aaa'; }}
+                        >
+                            ✏️ Editar Manualmente
+                        </button>
+                    </>
+                ) : (
+                    <div 
+                        onMouseDown={(e) => e.stopPropagation()} /* Trava de segurança para não ativar os cliques de teste */
+                        style={{display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px'}}
+                    >
+                        <input 
+                            type="text" 
+                            value={deviceInfo.vendor} 
+                            onChange={(e) => setDeviceInfo({...deviceInfo, vendor: e.target.value})} 
+                            placeholder="Marca (ex: Logitech)"
+                            style={{padding: '6px', borderRadius: '4px', border: '1px solid #3b82f6', background: '#0f172a', color: 'white', fontSize: '0.85rem'}}
+                            autoFocus
+                        />
+                        <input 
+                            type="text" 
+                            value={deviceInfo.model} 
+                            onChange={(e) => setDeviceInfo({...deviceInfo, model: e.target.value})} 
+                            placeholder="Modelo (ex: G Pro)"
+                            style={{padding: '6px', borderRadius: '4px', border: '1px solid #3b82f6', background: '#0f172a', color: 'white', fontSize: '0.85rem'}}
+                        />
+                        <button 
+                            onClick={() => setIsEditingModel(false)}
+                            style={{background: '#3b82f6', color: 'white', border: 'none', borderRadius: '4px', padding: '6px', cursor: 'pointer', fontWeight: 'bold'}}
+                        >
+                            Confirmar
+                        </button>
+                    </div>
+                )}
             </div>
+
             <div className="info-card">
                 <label>SCROLL DELTA</label>
                 <h3 className={tests.scrollOk ? 'text-green' : ''}>{currentDelta}</h3>
