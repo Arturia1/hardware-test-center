@@ -46,9 +46,3 @@ Como a aplicação lida com dispositivos de entrada e mídia (Webcam), ela foi p
 * Tratamento de políticas de segurança de origem para APIs de mídia.
 
 ---
-
-## 🚀 Como Executar
-
-1. Clone o repositório:
-   ```bash
-   git clone [https://github.com/Arturia1/hardware-suite.git](https://github.com/Arturia1/hardware-suite.git)
