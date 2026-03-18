@@ -5,8 +5,6 @@
   <img src="https://img.shields.io/badge/vite-%23646CFF.svg?style=for-the-badge&logo=vite&logoColor=white" alt="Vite" />
   <img src="https://img.shields.io/badge/tailwindcss-%2338B2AC.svg?style=for-the-badge&logo=tailwind-css&logoColor=white" alt="TailwindCSS" />
   <img src="https://img.shields.io/badge/TensorFlow.js-FF6F00?style=for-the-badge&logo=tensorflow&logoColor=white" alt="TensorFlow" />
-  <img src="https://img.shields.io/badge/jsPDF-white?style=for-the-badge&logo=adobeacrobatreader&logoColor=red" alt="jsPDF" />
-  <img src="https://img.shields.io/badge/Lucide_React-white?style=for-the-badge&logo=lucide&logoColor=black" alt="Lucide" />
 </div>
 <br/>
 
